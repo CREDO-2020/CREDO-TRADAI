@@ -17,6 +17,16 @@ def get_client():
 def enabled():
     return get_client() is not None
 
+def get_user_from_access_token(access_token: str):
+    client = get_client()
+    if client is None or not access_token:
+        return None
+    try:
+        result = client.auth.get_user(access_token)
+        return result.user
+    except Exception:
+        return None
+
 def get_demo_account(user_id: str):
     client = get_client()
     if client is None:
@@ -36,12 +46,7 @@ def upsert_demo_account(user_id: str, starting_balance: float, balance: float, r
     client = get_client()
     if client is None:
         return None
-    payload = {
-        "user_id": user_id,
-        "starting_balance": starting_balance,
-        "balance": balance,
-        "realized_pnl": realized_pnl,
-    }
+    payload = {"user_id": user_id, "starting_balance": starting_balance, "balance": balance, "realized_pnl": realized_pnl}
     result = client.table("demo_accounts").upsert(payload, on_conflict="user_id").execute()
     return result.data[0] if result.data else None
 
@@ -56,8 +61,7 @@ def create_paper_trade(user_id: str, trade: dict):
     client = get_client()
     if client is None:
         return None
-    payload = {**trade, "user_id": user_id}
-    result = client.table("paper_trades").insert(payload).execute()
+    result = client.table("paper_trades").insert({**trade, "user_id": user_id}).execute()
     return result.data[0] if result.data else None
 
 def close_paper_trade(user_id: str, trade_id: str, exit_price: float, pnl: float):
@@ -68,5 +72,6 @@ def close_paper_trade(user_id: str, trade_id: str, exit_price: float, pnl: float
         "exit": exit_price,
         "pnl": pnl,
         "status": "CLOSED",
+        "closed_at": "now()",
     }).eq("id", trade_id).eq("user_id", user_id).eq("status", "OPEN").execute()
     return result.data[0] if result.data else None
