@@ -8,8 +8,10 @@ from .risk import position_size
 from .strategy import explain
 from .market import get_market
 from .paper import open_trade, close_trade, list_trades
+from .journal import summary, export_rows
+from .backtest import run_backtest
 
-app = FastAPI(title="CREDO-TRADAI API", version="0.2.0")
+app = FastAPI(title="CREDO-TRADAI API", version="0.3.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -33,6 +35,11 @@ class PaperTradeRequest(BaseModel):
 class CloseTradeRequest(BaseModel):
     trade_id: str
     exit_price: float
+
+class BacktestRequest(BaseModel):
+    closes: list[float] = Field(min_length=60)
+    starting_balance: float = Field(gt=0, default=10000)
+    risk_percent: float = Field(gt=0, le=2, default=1)
 
 @app.get("/")
 def dashboard():
@@ -72,6 +79,8 @@ def paper_open(req: PaperTradeRequest):
     side = req.side.upper()
     if side not in {"LONG", "SHORT"}:
         raise HTTPException(status_code=400, detail="Side must be LONG or SHORT")
+    if req.entry == req.stop_loss:
+        raise HTTPException(status_code=400, detail="Stop-loss must differ from entry")
     return open_trade(req.symbol, side, req.entry, req.stop_loss, req.take_profit, req.quantity)
 
 @app.get("/paper/trades")
@@ -84,3 +93,15 @@ def paper_close(req: CloseTradeRequest):
     if not trade:
         raise HTTPException(status_code=404, detail="Open trade not found")
     return trade
+
+@app.get("/journal/summary")
+def journal_summary():
+    return summary()
+
+@app.get("/journal/export")
+def journal_export():
+    return {"trades": export_rows()}
+
+@app.post("/backtest")
+def backtest(req: BacktestRequest):
+    return run_backtest(req.closes, req.starting_balance, req.risk_percent)
