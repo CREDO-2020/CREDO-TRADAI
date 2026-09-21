@@ -14,10 +14,11 @@ from .journal import summary, export_rows
 from .backtest import run_backtest
 from .execution import get_mode, execute_order
 from .account import DemoAccount, apply_pnl
+from .trading_engine import evaluate
 
 init_db()
 demo_account = DemoAccount()
-app = FastAPI(title="CREDO-TRADAI API", version="1.0.0")
+app = FastAPI(title="CREDO-TRADAI API", version="1.1.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -49,7 +50,7 @@ class MonitorRequest(BaseModel):
 class BacktestRequest(BaseModel):
     closes: list[float] = Field(min_length=60)
     starting_balance: float = Field(gt=0, default=10000)
-    risk_percent: float = Field(gt=0, le=2, default=1)
+    risk_percent: float = Field(gt=0, le=2)
 
 class OrderRequest(BaseModel):
     symbol: str
@@ -61,13 +62,18 @@ class OrderRequest(BaseModel):
 class PnlRequest(BaseModel):
     pnl: float
 
+class EngineRequest(BaseModel):
+    closes: list[float] = Field(min_length=50)
+    balance: float = Field(gt=0)
+    risk_percent: float = Field(gt=0, le=2, default=1)
+
 @app.get("/")
 def dashboard():
     return FileResponse(Path(__file__).parent.parent / "static" / "index.html")
 
 @app.get("/health")
 def health():
-    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.0.0"}
+    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.1.0"}
 
 @app.get("/execution/mode")
 def execution_mode():
@@ -87,6 +93,13 @@ def demo_account_reset():
 def demo_account_pnl(req: PnlRequest):
     try:
         return apply_pnl(demo_account, req.pnl)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+@app.post("/engine/evaluate")
+def engine_evaluate(req: EngineRequest):
+    try:
+        return evaluate(req.closes, req.balance, req.risk_percent)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
