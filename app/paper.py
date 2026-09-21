@@ -5,7 +5,6 @@ from uuid import uuid4
 
 DB = Path(__file__).parent.parent / "trades.db"
 MAX_OPEN_TRADES = 3
-MAX_DAILY_LOSS = 0.03
 
 def conn():
     c = sqlite3.connect(DB)
@@ -20,14 +19,8 @@ def init_db():
             quantity REAL NOT NULL, status TEXT NOT NULL, exit REAL, pnl REAL,
             opened_at TEXT NOT NULL, closed_at TEXT)""")
 
-def _today_pnl(db):
-    row = db.execute("""SELECT COALESCE(SUM(pnl),0) pnl FROM trades
-        WHERE status='CLOSED' AND closed_at >= date('now')""").fetchone()
-    return float(row["pnl"])
-
 def _open_count(db):
-    row = db.execute("SELECT COUNT(*) n FROM trades WHERE status='OPEN'").fetchone()
-    return int(row["n"])
+    return int(db.execute("SELECT COUNT(*) n FROM trades WHERE status='OPEN'").fetchone()["n"])
 
 def open_trade(symbol, side, entry, stop_loss, take_profit, quantity):
     side = side.upper()
@@ -49,16 +42,34 @@ def get_trade(trade_id):
         row = db.execute("SELECT * FROM trades WHERE id=?", (trade_id,)).fetchone()
         return dict(row) if row else None
 
-def close_trade(trade_id, exit_price):
+def close_trade(trade_id, exit_price, reason="MANUAL"):
     with conn() as db:
         row = db.execute("SELECT * FROM trades WHERE id=? AND status='OPEN'", (trade_id,)).fetchone()
         if not row:
             return None
         direction = 1 if row["side"] == "LONG" else -1
         pnl = round((exit_price - row["entry"]) * row["quantity"] * direction, 8)
-        db.execute("UPDATE trades SET exit=?, pnl=?, status='CLOSED', closed_at=? WHERE id=?",
+        db.execute("""UPDATE trades SET exit=?, pnl=?, status='CLOSED', closed_at=?
+                      WHERE id=?""",
                    (exit_price, pnl, datetime.now(timezone.utc).isoformat(), trade_id))
-    return get_trade(trade_id)
+    trade = get_trade(trade_id)
+    trade["close_reason"] = reason
+    return trade
+
+def monitor_trade(trade, current_price):
+    if trade["status"] != "OPEN":
+        return None
+    if trade["side"] == "LONG":
+        if current_price <= trade["stop_loss"]:
+            return close_trade(trade["id"], trade["stop_loss"], "STOP_LOSS")
+        if current_price >= trade["take_profit"]:
+            return close_trade(trade["id"], trade["take_profit"], "TAKE_PROFIT")
+    else:
+        if current_price >= trade["stop_loss"]:
+            return close_trade(trade["id"], trade["stop_loss"], "STOP_LOSS")
+        if current_price <= trade["take_profit"]:
+            return close_trade(trade["id"], trade["take_profit"], "TAKE_PROFIT")
+    return None
 
 def list_trades():
     with conn() as db:
