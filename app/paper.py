@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 DB = Path(__file__).parent.parent / "trades.db"
+MAX_OPEN_TRADES = 3
+MAX_DAILY_LOSS = 0.03
 
 def conn():
     c = sqlite3.connect(DB)
@@ -18,12 +20,24 @@ def init_db():
             quantity REAL NOT NULL, status TEXT NOT NULL, exit REAL, pnl REAL,
             opened_at TEXT NOT NULL, closed_at TEXT)""")
 
+def _today_pnl(db):
+    row = db.execute("""SELECT COALESCE(SUM(pnl),0) pnl FROM trades
+        WHERE status='CLOSED' AND closed_at >= date('now')""").fetchone()
+    return float(row["pnl"])
+
+def _open_count(db):
+    row = db.execute("SELECT COUNT(*) n FROM trades WHERE status='OPEN'").fetchone()
+    return int(row["n"])
+
 def open_trade(symbol, side, entry, stop_loss, take_profit, quantity):
     side = side.upper()
     if side == "LONG" and not (stop_loss < entry < take_profit):
         raise ValueError("LONG requires stop-loss < entry < take-profit")
     if side == "SHORT" and not (take_profit < entry < stop_loss):
         raise ValueError("SHORT requires take-profit < entry < stop-loss")
+    with conn() as db:
+        if _open_count(db) >= MAX_OPEN_TRADES:
+            raise ValueError(f"Maximum open paper trades reached ({MAX_OPEN_TRADES})")
     trade = (str(uuid4())[:8], symbol.upper(), side, entry, stop_loss, take_profit,
              quantity, "OPEN", None, None, datetime.now(timezone.utc).isoformat(), None)
     with conn() as db:
@@ -57,7 +71,9 @@ def summary():
             SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) wins,
             SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) losses,
             COALESCE(SUM(pnl),0) pnl FROM trades WHERE status='CLOSED'""").fetchone()
+        open_count = _open_count(db)
     count, wins, losses, pnl = row["count"], row["wins"] or 0, row["losses"] or 0, row["pnl"]
     return {"closed_trades": count, "wins": wins, "losses": losses,
             "win_rate_percent": round(wins/count*100,2) if count else 0,
-            "total_pnl": round(pnl,8)}
+            "total_pnl": round(pnl,8), "open_trades": open_count,
+            "max_open_trades": MAX_OPEN_TRADES}
