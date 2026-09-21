@@ -1,21 +1,21 @@
 const SUPABASE_URL = "https://vudmpeluukvraqozkwxr.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "REPLACE_WITH_SUPABASE_PUBLISHABLE_KEY";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_U19_dtCpAZ3tJTooca7M-Q_nNSYL1bl";
 
 let supabaseClient = null;
 
-if (window.supabase && SUPABASE_PUBLISHABLE_KEY.startsWith("sb_")) {
+if (window.supabase) {
   supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 }
 
 async function signUp(email, password) {
-  if (!supabaseClient) throw new Error("Supabase client is not configured.");
+  if (!supabaseClient) throw new Error("Supabase client is not available.");
   const { data, error } = await supabaseClient.auth.signUp({ email, password });
   if (error) throw error;
   return data;
 }
 
 async function signIn(email, password) {
-  if (!supabaseClient) throw new Error("Supabase client is not configured.");
+  if (!supabaseClient) throw new Error("Supabase client is not available.");
   const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
   if (error) throw error;
   return data;
@@ -34,8 +34,19 @@ async function currentUser() {
   return data.user;
 }
 
-async function cloudHeaders() {
-  const user = await currentUser();
-  if (!user) throw new Error("Please sign in first.");
-  return { "X-User-ID": user.id };
+async function accessToken() {
+  if (!supabaseClient) return null;
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  return session?.access_token || null;
+}
+
+async function authFetch(url, options = {}) {
+  const token = await accessToken();
+  if (!token) {
+    window.location.href = "/login";
+    throw new Error("Authentication required.");
+  }
+  const headers = new Headers(options.headers || {});
+  headers.set("Authorization", "Bearer " + token);
+  return fetch(url, { ...options, headers });
 }
