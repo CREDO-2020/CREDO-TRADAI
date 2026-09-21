@@ -6,13 +6,14 @@ from .indicators import ema, rsi, macd, atr
 from .signals import generate_signal
 from .risk import position_size
 from .strategy import explain
+from .strategies import compare_strategies
 from .market import get_market
 from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade
 from .journal import summary, export_rows
 from .backtest import run_backtest
 
 init_db()
-app = FastAPI(title="CREDO-TRADAI API", version="0.6.0")
+app = FastAPI(title="CREDO-TRADAI API", version="0.7.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -52,7 +53,7 @@ def dashboard():
 
 @app.get("/health")
 def health():
-    return {"status":"ok","project":"CREDO-TRADAI","mode":"paper-trading","database":"sqlite"}
+    return {"status":"ok","project":"CREDO-TRADAI","mode":"paper-trading","database":"sqlite","version":"0.7.0"}
 
 @app.get("/market/{symbol}")
 def market(symbol: str, interval: str = "1h", range_: str = "5d"):
@@ -71,6 +72,10 @@ def analyze(req: AnalysisRequest):
 @app.post("/ai-explain")
 def ai_explain(req: AnalysisRequest):
     return explain(req.closes)
+
+@app.post("/strategies/compare")
+def strategies(req: AnalysisRequest):
+    return {"strategies": compare_strategies(req.closes)}
 
 @app.post("/risk/position-size")
 def risk(req: RiskRequest):
@@ -97,12 +102,11 @@ def paper_close(req: CloseTradeRequest):
 
 @app.post("/paper/monitor")
 def paper_monitor(req: MonitorRequest):
-    checked = []
+    checked=[]
     for trade in list_trades():
-        if trade["status"] == "OPEN" and trade["symbol"] == req.symbol.upper():
-            closed = monitor_trade(trade, req.current_price)
-            checked.append(closed or trade)
-    return {"symbol": req.symbol.upper(), "current_price": req.current_price, "checked": checked}
+        if trade["status"]=="OPEN" and trade["symbol"]==req.symbol.upper():
+            checked.append(monitor_trade(trade,req.current_price) or trade)
+    return {"symbol":req.symbol.upper(),"current_price":req.current_price,"checked":checked}
 
 @app.get("/journal/summary")
 def journal_summary():
