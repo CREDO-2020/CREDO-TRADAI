@@ -7,11 +7,12 @@ from .signals import generate_signal
 from .risk import position_size
 from .strategy import explain
 from .market import get_market
-from .paper import open_trade, close_trade, list_trades
+from .paper import init_db, open_trade, close_trade, list_trades
 from .journal import summary, export_rows
 from .backtest import run_backtest
 
-app = FastAPI(title="CREDO-TRADAI API", version="0.3.0")
+init_db()
+app = FastAPI(title="CREDO-TRADAI API", version="0.4.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -47,7 +48,7 @@ def dashboard():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "project": "CREDO-TRADAI", "mode": "paper-trading"}
+    return {"status": "ok", "project": "CREDO-TRADAI", "mode": "paper-trading", "database": "sqlite"}
 
 @app.get("/market/{symbol}")
 def market(symbol: str, interval: str = "1h", range_: str = "5d"):
@@ -59,12 +60,9 @@ def market(symbol: str, interval: str = "1h", range_: str = "5d"):
 @app.post("/analyze")
 def analyze(req: AnalysisRequest):
     closes = req.closes
-    return {
-        "ema20": ema(closes, 20), "ema50": ema(closes, 50),
-        "rsi14": rsi(closes, 14), "macd": macd(closes),
-        "atr14": atr(req.highs, req.lows, closes, 14) if req.highs and req.lows else None,
-        "signal": generate_signal(closes),
-    }
+    return {"ema20": ema(closes,20), "ema50": ema(closes,50), "rsi14": rsi(closes,14),
+            "macd": macd(closes), "atr14": atr(req.highs,req.lows,closes,14) if req.highs and req.lows else None,
+            "signal": generate_signal(closes)}
 
 @app.post("/ai-explain")
 def ai_explain(req: AnalysisRequest):
@@ -77,10 +75,8 @@ def risk(req: RiskRequest):
 @app.post("/paper/open")
 def paper_open(req: PaperTradeRequest):
     side = req.side.upper()
-    if side not in {"LONG", "SHORT"}:
-        raise HTTPException(status_code=400, detail="Side must be LONG or SHORT")
-    if req.entry == req.stop_loss:
-        raise HTTPException(status_code=400, detail="Stop-loss must differ from entry")
+    if side not in {"LONG","SHORT"}: raise HTTPException(400, "Side must be LONG or SHORT")
+    if req.entry == req.stop_loss: raise HTTPException(400, "Stop-loss must differ from entry")
     return open_trade(req.symbol, side, req.entry, req.stop_loss, req.take_profit, req.quantity)
 
 @app.get("/paper/trades")
@@ -90,8 +86,7 @@ def paper_trades():
 @app.post("/paper/close")
 def paper_close(req: CloseTradeRequest):
     trade = close_trade(req.trade_id, req.exit_price)
-    if not trade:
-        raise HTTPException(status_code=404, detail="Open trade not found")
+    if not trade: raise HTTPException(404, "Open trade not found")
     return trade
 
 @app.get("/journal/summary")
