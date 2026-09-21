@@ -9,7 +9,7 @@ from .strategy import explain
 from .strategies import compare_strategies
 from .regime import detect_regime
 from .market import get_market
-from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade
+from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade, unrealized_pnl
 from .journal import summary, export_rows
 from .backtest import run_backtest
 from .execution import get_mode, execute_order
@@ -18,7 +18,7 @@ from .trading_engine import evaluate
 
 init_db()
 demo_account = DemoAccount()
-app = FastAPI(title="CREDO-TRADAI API", version="1.1.0")
+app = FastAPI(title="CREDO-TRADAI API", version="1.2.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -73,7 +73,7 @@ def dashboard():
 
 @app.get("/health")
 def health():
-    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.1.0"}
+    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.2.0"}
 
 @app.get("/execution/mode")
 def execution_mode():
@@ -156,6 +156,17 @@ def paper_open(req: PaperTradeRequest):
 @app.get("/paper/trades")
 def paper_trades():
     return {"trades":list_trades()}
+
+@app.get("/paper/positions")
+def paper_positions():
+    return {"positions":list_trades()}
+
+@app.get("/paper/position/{trade_id}")
+def paper_position(trade_id: str):
+    trade = next((t for t in list_trades() if t["id"] == trade_id), None)
+    if not trade:
+        raise HTTPException(404, "Trade not found")
+    return trade
 
 @app.post("/paper/close")
 def paper_close(req: CloseTradeRequest):
