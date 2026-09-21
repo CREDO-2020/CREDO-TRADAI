@@ -12,9 +12,10 @@ from .market import get_market
 from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade
 from .journal import summary, export_rows
 from .backtest import run_backtest
+from .execution import get_mode, execute_order
 
 init_db()
-app = FastAPI(title="CREDO-TRADAI API", version="0.8.0")
+app = FastAPI(title="CREDO-TRADAI API", version="0.9.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -48,13 +49,35 @@ class BacktestRequest(BaseModel):
     starting_balance: float = Field(gt=0, default=10000)
     risk_percent: float = Field(gt=0, le=2, default=1)
 
+class OrderRequest(BaseModel):
+    symbol: str
+    side: str
+    quantity: float = Field(gt=0)
+    order_type: str = "MARKET"
+    price: float | None = None
+
 @app.get("/")
 def dashboard():
     return FileResponse(Path(__file__).parent.parent / "static" / "index.html")
 
 @app.get("/health")
 def health():
-    return {"status":"ok","project":"CREDO-TRADAI","mode":"paper-trading","database":"sqlite","version":"0.8.0"}
+    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"0.9.0"}
+
+@app.get("/execution/mode")
+def execution_mode():
+    return {"mode":get_mode(),"live_enabled":get_mode()=="live","real_orders_configured":False}
+
+@app.post("/execution/order")
+def execution_order(req: OrderRequest):
+    try:
+        return execute_order(req.symbol, req.side, req.quantity, req.order_type, req.price)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc))
+    except NotImplementedError as exc:
+        raise HTTPException(501, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 @app.get("/market/{symbol}")
 def market(symbol: str, interval: str = "1h", range_: str = "5d"):
