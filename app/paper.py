@@ -42,6 +42,10 @@ def get_trade(trade_id):
         row = db.execute("SELECT * FROM trades WHERE id=?", (trade_id,)).fetchone()
         return dict(row) if row else None
 
+def unrealized_pnl(trade, current_price):
+    direction = 1 if trade["side"] == "LONG" else -1
+    return round((current_price - trade["entry"]) * trade["quantity"] * direction, 8)
+
 def close_trade(trade_id, exit_price, reason="MANUAL"):
     with conn() as db:
         row = db.execute("SELECT * FROM trades WHERE id=? AND status='OPEN'", (trade_id,)).fetchone()
@@ -71,20 +75,31 @@ def monitor_trade(trade, current_price):
             return close_trade(trade["id"], trade["take_profit"], "TAKE_PROFIT")
     return None
 
-def list_trades():
+def list_trades(current_prices=None):
+    current_prices = current_prices or {}
     with conn() as db:
         rows = db.execute("SELECT * FROM trades ORDER BY opened_at DESC").fetchall()
-        return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        trade = dict(r)
+        if trade["status"] == "OPEN" and trade["symbol"] in current_prices:
+            trade["current_price"] = current_prices[trade["symbol"]]
+            trade["unrealized_pnl"] = unrealized_pnl(trade, current_prices[trade["symbol"]])
+        result.append(trade)
+    return result
 
-def summary():
+def summary(current_prices=None):
+    current_prices = current_prices or {}
     with conn() as db:
         row = db.execute("""SELECT COUNT(*) count,
             SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) wins,
             SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) losses,
             COALESCE(SUM(pnl),0) pnl FROM trades WHERE status='CLOSED'""").fetchone()
-        open_count = _open_count(db)
+        open_rows = db.execute("SELECT * FROM trades WHERE status='OPEN'").fetchall()
     count, wins, losses, pnl = row["count"], row["wins"] or 0, row["losses"] or 0, row["pnl"]
+    floating = sum(unrealized_pnl(dict(r), current_prices[dict(r)["symbol"]])
+                   for r in open_rows if dict(r)["symbol"] in current_prices)
     return {"closed_trades": count, "wins": wins, "losses": losses,
             "win_rate_percent": round(wins/count*100,2) if count else 0,
-            "total_pnl": round(pnl,8), "open_trades": open_count,
-            "max_open_trades": MAX_OPEN_TRADES}
+            "total_pnl": round(pnl,8), "unrealized_pnl": round(floating,8),
+            "open_trades": len(open_rows), "max_open_trades": MAX_OPEN_TRADES}
