@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 try:
@@ -72,6 +73,6 @@ def close_paper_trade(user_id: str, trade_id: str, exit_price: float, pnl: float
         "exit": exit_price,
         "pnl": pnl,
         "status": "CLOSED",
-        "closed_at": "now()",
+        "closed_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", trade_id).eq("user_id", user_id).eq("status", "OPEN").execute()
     return result.data[0] if result.data else None
