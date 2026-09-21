@@ -14,11 +14,12 @@ from .journal import summary, export_rows
 from .backtest import run_backtest
 from .execution import get_mode, execute_order
 from .account import DemoAccount, apply_pnl
+from .demo_store import load_account, save_account
 from .trading_engine import evaluate
 
 init_db()
-demo_account = DemoAccount()
-app = FastAPI(title="CREDO-TRADAI API", version="1.4.0")
+demo_account = load_account()
+app = FastAPI(title="CREDO-TRADAI API", version="1.5.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -81,7 +82,7 @@ def dashboard():
 
 @app.get("/health")
 def health():
-    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.4.0"}
+    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.5.0","demo_persistence":"local_json"}
 
 @app.get("/execution/mode")
 def execution_mode():
@@ -96,27 +97,29 @@ def _floating_pnl():
                 prices[symbol] = candles[-1]["close"]
         except Exception:
             pass
-    return sum(
-        unrealized_pnl(t, prices[t["symbol"]])
-        for t in list_trades()
-        if t["status"] == "OPEN" and t["symbol"] in prices
-    )
+    return sum(unrealized_pnl(t, prices[t["symbol"]]) for t in list_trades()
+               if t["status"] == "OPEN" and t["symbol"] in prices)
+
+def _save():
+    save_account(demo_account)
 
 @app.get("/demo/account")
 def demo_account_status():
-    floating = _floating_pnl()
-    return demo_account.snapshot(floating)
+    return demo_account.snapshot(_floating_pnl())
 
 @app.post("/demo/account/reset")
 def demo_account_reset():
     global demo_account
     demo_account = DemoAccount()
+    _save()
     return demo_account.snapshot()
 
 @app.post("/demo/account/pnl")
 def demo_account_pnl(req: PnlRequest):
     try:
-        return apply_pnl(demo_account, req.pnl, _floating_pnl())
+        result = apply_pnl(demo_account, req.pnl, _floating_pnl())
+        _save()
+        return result
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -188,8 +191,7 @@ def paper_positions():
 @app.get("/paper/position/{trade_id}")
 def paper_position(trade_id: str):
     trade = next((t for t in list_trades() if t["id"] == trade_id), None)
-    if not trade:
-        raise HTTPException(404, "Trade not found")
+    if not trade: raise HTTPException(404, "Trade not found")
     return trade
 
 @app.post("/paper/close")
@@ -197,9 +199,11 @@ def paper_close(req: CloseTradeRequest):
     trade=close_trade(req.trade_id,req.exit_price)
     if not trade: raise HTTPException(404,"Open trade not found")
     try:
-        apply_pnl(demo_account, trade["pnl"], _floating_pnl())
+        result = apply_pnl(demo_account, trade["pnl"], _floating_pnl())
+        _save()
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    trade["account"] = result
     return trade
 
 @app.post("/paper/monitor")
@@ -210,7 +214,9 @@ def paper_monitor(req: MonitorRequest):
             result = monitor_trade(trade,req.current_price)
             if result:
                 try:
-                    apply_pnl(demo_account, result["pnl"], _floating_pnl())
+                    account = apply_pnl(demo_account, result["pnl"], _floating_pnl())
+                    _save()
+                    result["account"] = account
                 except ValueError as exc:
                     raise HTTPException(400, str(exc))
                 checked.append(result)
@@ -231,9 +237,7 @@ def journal_export():
 
 @app.post("/backtest")
 def backtest(req: BacktestRequest):
-    return run_backtest(
-        req.closes, req.starting_balance, req.risk_percent,
+    return run_backtest(req.closes, req.starting_balance, req.risk_percent,
         req.fee_bps, req.spread_bps, req.slippage_bps,
         req.stop_loss_percent, req.take_profit_percent,
-        req.highs, req.lows, req.ambiguity,
-    )
+        req.highs, req.lows, req.ambiguity)
