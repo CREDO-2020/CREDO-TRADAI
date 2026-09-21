@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CREDO-TRADAI — Login</title>
+<style>
+body{margin:0;background:#071018;color:#eef7ff;font-family:Arial,sans-serif;display:grid;place-items:center;min-height:100vh}
+.card{width:min(420px,90vw);padding:32px;border:1px solid #203747;border-radius:18px;background:#0c1720;box-shadow:0 20px 60px #0008}
+h1{margin-top:0}.sub{color:#9db0bd}input,button{width:100%;box-sizing:border-box;padding:13px;margin-top:12px;border-radius:10px;border:1px solid #304756;background:#101f2a;color:#fff}button{cursor:pointer;background:#19a974;border:0;font-weight:700}#msg{margin-top:15px;min-height:20px}.demo{margin-top:20px;padding:12px;border-radius:10px;background:#101f2a;color:#9db0bd;font-size:13px}
+</style>
+</head>
+<body>
+<main class="card">
+<h1>🤖 CREDO-TRADAI</h1>
+<p class="sub">Sign in to your private trading research workspace.</p>
+<input id="email" type="email" placeholder="Email">
+<input id="password" type="password" placeholder="Password">
+<button id="signin">Sign In</button>
+<button id="signup">Create Account</button>
+<div id="msg"></div>
+<div class="demo">Demo trading only. Real-money execution remains disabled.</div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/auth.js"></script>
+<script>
+const msg=document.getElementById("msg");
+function values(){return {email:email.value.trim(),password:password.value};}
+signin.onclick=async()=>{try{const v=values();await signIn(v.email,v.password);location.href="/";}catch(e){msg.textContent=e.message;}};
+signup.onclick=async()=>{try{const v=values();const d=await signUp(v.email,v.password);msg.textContent=d.session?"Account created.":"Check your email to confirm your account.";}catch(e){msg.textContent=e.message;}};
+</script>
+</body>
+</html>
