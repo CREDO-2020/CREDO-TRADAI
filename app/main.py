@@ -16,11 +16,20 @@ from .execution import get_mode, execute_order
 from .account import DemoAccount, apply_pnl
 from .demo_store import load_account, save_account
 from .trading_engine import evaluate
-from .supabase_store import enabled as supabase_enabled, get_demo_account, create_demo_account, upsert_demo_account, list_paper_trades, create_paper_trade, close_paper_trade
+from .supabase_store import (
+    enabled as supabase_enabled,
+    get_user_from_access_token,
+    get_demo_account,
+    create_demo_account,
+    upsert_demo_account,
+    list_paper_trades,
+    create_paper_trade,
+    close_paper_trade,
+)
 
 init_db()
 demo_account = load_account()
-app = FastAPI(title="CREDO-TRADAI API", version="1.6.0")
+app = FastAPI(title="CREDO-TRADAI API", version="1.7.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -77,20 +86,33 @@ class EngineRequest(BaseModel):
     balance: float = Field(gt=0)
     risk_percent: float = Field(gt=0, le=2, default=1)
 
-def _user_id(x_user_id: str | None):
-    if not x_user_id:
-        raise HTTPException(401, "Authenticated user ID is required.")
+def _current_user(authorization: str | None):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Authentication required. Please sign in.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_from_access_token(token)
+    if not user:
+        raise HTTPException(401, "Invalid or expired Supabase session.")
     if not supabase_enabled():
         raise HTTPException(503, "Supabase persistence is not configured.")
-    return x_user_id
+    return user
 
 @app.get("/")
 def dashboard():
     return FileResponse(Path(__file__).parent.parent / "static" / "index.html")
 
+@app.get("/login")
+def login_page():
+    return FileResponse(Path(__file__).parent.parent / "static" / "auth.html")
+
+@app.get("/auth/me")
+def auth_me(authorization: str | None = Header(default=None)):
+    user = _current_user(authorization)
+    return {"id": str(user.id), "email": user.email}
+
 @app.get("/health")
 def health():
-    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.6.0","supabase_persistence":supabase_enabled(),"live_orders_configured":False}
+    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.7.0","supabase_persistence":supabase_enabled(),"live_orders_configured":False}
 
 @app.get("/execution/mode")
 def execution_mode():
@@ -116,25 +138,26 @@ def demo_account_status():
     return demo_account.snapshot(_floating_pnl())
 
 @app.get("/cloud/demo/account")
-def cloud_demo_account(x_user_id: str | None = Header(default=None)):
-    user_id = _user_id(x_user_id)
-    account = get_demo_account(user_id)
+def cloud_demo_account(authorization: str | None = Header(default=None)):
+    user = _current_user(authorization)
+    account = get_demo_account(str(user.id))
     if not account:
-        account = create_demo_account(user_id)
+        account = create_demo_account(str(user.id))
     return account
 
 @app.post("/cloud/demo/account/reset")
-def cloud_demo_account_reset(x_user_id: str | None = Header(default=None)):
-    user_id = _user_id(x_user_id)
-    return upsert_demo_account(user_id, 10000, 10000, 0)
+def cloud_demo_account_reset(authorization: str | None = Header(default=None)):
+    user = _current_user(authorization)
+    return upsert_demo_account(str(user.id), 10000, 10000, 0)
 
 @app.get("/cloud/paper/trades")
-def cloud_paper_trades(x_user_id: str | None = Header(default=None)):
-    return {"trades": list_paper_trades(_user_id(x_user_id))}
+def cloud_paper_trades(authorization: str | None = Header(default=None)):
+    user = _current_user(authorization)
+    return {"trades": list_paper_trades(str(user.id))}
 
 @app.post("/cloud/paper/open")
-def cloud_paper_open(req: PaperTradeRequest, x_user_id: str | None = Header(default=None)):
-    user_id = _user_id(x_user_id)
+def cloud_paper_open(req: PaperTradeRequest, authorization: str | None = Header(default=None)):
+    user = _current_user(authorization)
     side = req.side.upper()
     if side not in {"LONG", "SHORT"}:
         raise HTTPException(400, "Side must be LONG or SHORT")
@@ -142,19 +165,18 @@ def cloud_paper_open(req: PaperTradeRequest, x_user_id: str | None = Header(defa
         raise HTTPException(400, "LONG requires stop-loss < entry < take-profit")
     if side == "SHORT" and not (req.take_profit < req.entry < req.stop_loss):
         raise HTTPException(400, "SHORT requires take-profit < entry < stop-loss")
-    trade = {
-        "symbol": req.symbol.upper(), "side": side, "entry": req.entry,
-        "stop_loss": req.stop_loss, "take_profit": req.take_profit,
-        "quantity": req.quantity, "status": "OPEN"
-    }
-    result = create_paper_trade(user_id, trade)
+    trade = {"symbol": req.symbol.upper(), "side": side, "entry": req.entry,
+             "stop_loss": req.stop_loss, "take_profit": req.take_profit,
+             "quantity": req.quantity, "status": "OPEN"}
+    result = create_paper_trade(str(user.id), trade)
     if result is None:
         raise HTTPException(503, "Supabase persistence is unavailable.")
     return result
 
 @app.post("/cloud/paper/close")
-def cloud_paper_close(req: CloseTradeRequest, x_user_id: str | None = Header(default=None)):
-    user_id = _user_id(x_user_id)
+def cloud_paper_close(req: CloseTradeRequest, authorization: str | None = Header(default=None)):
+    user = _current_user(authorization)
+    user_id = str(user.id)
     trades = list_paper_trades(user_id)
     trade = next((t for t in trades if str(t["id"]) == req.trade_id and t["status"] == "OPEN"), None)
     if not trade:
@@ -209,7 +231,7 @@ def market(symbol: str, interval: str = "1h", range_: str = "5d"):
 
 @app.post("/analyze")
 def analyze(req: AnalysisRequest):
-    closes=req.closes
+    closes = req.closes
     return {"ema20":ema(closes,20),"ema50":ema(closes,50),"rsi14":rsi(closes,14),
             "macd":macd(closes),"atr14":atr(req.highs,req.lows,closes,14) if req.highs and req.lows else None,
             "signal":generate_signal(closes)}
@@ -233,7 +255,8 @@ def risk(req: RiskRequest):
 @app.post("/paper/open")
 def paper_open(req: PaperTradeRequest):
     side=req.side.upper()
-    if side not in {"LONG","SHORT"}: raise HTTPException(400,"Side must be LONG or SHORT")
+    if side not in {"LONG","SHORT"}:
+        raise HTTPException(400,"Side must be LONG or SHORT")
     try:
         return open_trade(req.symbol,side,req.entry,req.stop_loss,req.take_profit,req.quantity)
     except ValueError as exc:
