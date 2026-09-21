@@ -7,13 +7,14 @@ from .signals import generate_signal
 from .risk import position_size
 from .strategy import explain
 from .strategies import compare_strategies
+from .regime import detect_regime
 from .market import get_market
 from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade
 from .journal import summary, export_rows
 from .backtest import run_backtest
 
 init_db()
-app = FastAPI(title="CREDO-TRADAI API", version="0.7.0")
+app = FastAPI(title="CREDO-TRADAI API", version="0.8.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -53,7 +54,7 @@ def dashboard():
 
 @app.get("/health")
 def health():
-    return {"status":"ok","project":"CREDO-TRADAI","mode":"paper-trading","database":"sqlite","version":"0.7.0"}
+    return {"status":"ok","project":"CREDO-TRADAI","mode":"paper-trading","database":"sqlite","version":"0.8.0"}
 
 @app.get("/market/{symbol}")
 def market(symbol: str, interval: str = "1h", range_: str = "5d"):
@@ -76,6 +77,10 @@ def ai_explain(req: AnalysisRequest):
 @app.post("/strategies/compare")
 def strategies(req: AnalysisRequest):
     return {"strategies": compare_strategies(req.closes)}
+
+@app.post("/regime")
+def regime(req: AnalysisRequest):
+    return detect_regime(req.closes, req.highs, req.lows)
 
 @app.post("/risk/position-size")
 def risk(req: RiskRequest):
