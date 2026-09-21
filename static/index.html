@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CREDO-TRADAI</title>
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#0b1020;color:#eaf0ff}header{padding:24px 5%;border-bottom:1px solid #27304a;display:flex;justify-content:space-between}main{max-width:1200px;margin:25px auto;padding:0 20px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}.card{background:#121a2e;border:1px solid #27304a;border-radius:14px;padding:18px}.big{font-size:28px;font-weight:bold}.muted{color:#8d9abb}button,select,input{padding:11px;border-radius:9px;border:1px solid #34405e;background:#0d1426;color:#fff}button{cursor:pointer}.controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}#chart{width:100%;height:280px;background:#0a0f1d;border-radius:10px}.signal{font-size:24px;font-weight:bold}.ok{color:#6ee7a1}.warn{color:#ffd166}.danger{color:#ff7b8a}li{margin:8px 0}.trade-row{display:flex;justify-content:space-between;border-bottom:1px solid #27304a;padding:10px 0}
+</style></head>
+<body>
+<header><strong>CREDO-TRADAI</strong><span class="muted">AI-assisted market research • Paper trading</span></header>
+<main>
+<div class="controls"><select id="symbol"><option>BTCUSDT</option><option>ETHUSDT</option><option>EURUSD</option><option>GBPUSD</option><option>USDJPY</option></select><select id="interval"><option>1h</option><option>15m</option><option>4h</option><option>1d</option></select><button onclick="loadMarket()">Refresh Market</button></div>
+<div class="grid">
+<div class="card"><div class="muted">Price</div><div id="price" class="big">—</div></div>
+<div class="card"><div class="muted">EMA 20</div><div id="ema20" class="big">—</div></div>
+<div class="card"><div class="muted">EMA 50</div><div id="ema50" class="big">—</div></div>
+<div class="card"><div class="muted">RSI 14</div><div id="rsi" class="big">—</div></div>
+<div class="card"><div class="muted">MACD Histogram</div><div id="macd" class="big">—</div></div>
+<div class="card"><div class="muted">Signal</div><div id="signal" class="signal warn">WAIT</div></div>
+</div>
+<div class="card" style="margin-top:16px"><h2>Market chart</h2><canvas id="chart"></canvas></div>
+<div class="grid" style="margin-top:16px">
+<div class="card"><h2>AI Market Explanation</h2><ul id="reasons"></ul></div>
+<div class="card"><h2>Paper Trading</h2>
+<div class="controls"><input id="entry" placeholder="Entry"><input id="sl" placeholder="Stop loss"><input id="tp" placeholder="Take profit"><input id="qty" placeholder="Quantity" value="1"><button onclick="openPaper()">Open Trade</button></div>
+<div id="trades"></div></div>
+</div>
+</main>
+<script>
+async function loadMarket(){
+ const symbol=document.getElementById('symbol').value, interval=document.getElementById('interval').value;
+ try{
+  const m=await fetch('/market/'+symbol+'?interval='+interval).then(r=>r.json());
+  const closes=m.candles.map(x=>x.close), res=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({closes})}).then(r=>r.json());
+  document.getElementById('price').textContent=Number(closes.at(-1)).toFixed(5);
+  document.getElementById('ema20').textContent=res.ema20??'—'; document.getElementById('ema50').textContent=res.ema50??'—';
+  document.getElementById('rsi').textContent=res.rsi14??'—'; document.getElementById('macd').textContent=res.macd?.histogram??'—';
+  const s=res.signal.action; const el=document.getElementById('signal'); el.textContent=s; el.className='signal '+(s==='WATCH_LONG'?'ok':s==='WATCH_SHORT'?'danger':'warn');
+  const ai=await fetch('/ai-explain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({closes})}).then(r=>r.json());
+  document.getElementById('reasons').innerHTML=ai.reasons.map(x=>'<li>'+x+'</li>').join('');
+  draw(closes.slice(-80));
+ }catch(e){alert('Market data error: '+e.message)}
+}
+function draw(values){const c=document.getElementById('chart'),x=c.getContext('2d'),w=c.width=c.clientWidth*devicePixelRatio,h=c.height=c.clientHeight*devicePixelRatio;x.clearRect(0,0,w,h);const min=Math.min(...values),max=Math.max(...values);x.beginPath();values.forEach((v,i)=>{const px=i*w/(values.length-1),py=h-(v-min)/(max-min||1)*h;i?x.lineTo(px,py):x.moveTo(px,py)});x.strokeStyle='#65d6ff';x.lineWidth=2*devicePixelRatio;x.stroke()}
+async function openPaper(){const entry=+document.getElementById('entry').value,sl=+document.getElementById('sl').value,tp=+document.getElementById('tp').value,qty=+document.getElementById('qty').value;const side=entry>sl?'LONG':'SHORT';await fetch('/paper/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:document.getElementById('symbol').value,side,entry,stop_loss:sl,take_profit:tp,quantity:qty})});loadTrades()}
+async function loadTrades(){const t=await fetch('/paper/trades').then(r=>r.json());document.getElementById('trades').innerHTML=t.trades.map(x=>'<div class="trade-row"><span>'+x.symbol+' '+x.side+'</span><span>'+x.status+' @ '+x.entry+'</span></div>').join('')}
+loadMarket();loadTrades();setInterval(loadMarket,60000);
+</script></body></html>
