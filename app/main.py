@@ -9,7 +9,7 @@ from .strategy import explain
 from .strategies import compare_strategies
 from .regime import detect_regime
 from .market import get_market
-from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade, unrealized_pnl
+from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade
 from .journal import summary, export_rows
 from .backtest import run_backtest
 from .execution import get_mode, execute_order
@@ -18,7 +18,7 @@ from .trading_engine import evaluate
 
 init_db()
 demo_account = DemoAccount()
-app = FastAPI(title="CREDO-TRADAI API", version="1.2.0")
+app = FastAPI(title="CREDO-TRADAI API", version="1.3.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -51,6 +51,14 @@ class BacktestRequest(BaseModel):
     closes: list[float] = Field(min_length=60)
     starting_balance: float = Field(gt=0, default=10000)
     risk_percent: float = Field(gt=0, le=2)
+    fee_bps: float = Field(ge=0, default=5)
+    spread_bps: float = Field(ge=0, default=2)
+    slippage_bps: float = Field(ge=0, default=1)
+    stop_loss_percent: float = Field(gt=0, default=0.5)
+    take_profit_percent: float = Field(gt=0, default=1)
+    highs: list[float] | None = None
+    lows: list[float] | None = None
+    ambiguity: str = "stop_first"
 
 class OrderRequest(BaseModel):
     symbol: str
@@ -73,7 +81,7 @@ def dashboard():
 
 @app.get("/health")
 def health():
-    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.2.0"}
+    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.3.0"}
 
 @app.get("/execution/mode")
 def execution_mode():
@@ -192,4 +200,9 @@ def journal_export():
 
 @app.post("/backtest")
 def backtest(req: BacktestRequest):
-    return run_backtest(req.closes,req.starting_balance,req.risk_percent)
+    return run_backtest(
+        req.closes, req.starting_balance, req.risk_percent,
+        req.fee_bps, req.spread_bps, req.slippage_bps,
+        req.stop_loss_percent, req.take_profit_percent,
+        req.highs, req.lows, req.ambiguity,
+    )
