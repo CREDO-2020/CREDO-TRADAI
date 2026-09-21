@@ -7,12 +7,12 @@ from .signals import generate_signal
 from .risk import position_size
 from .strategy import explain
 from .market import get_market
-from .paper import init_db, open_trade, close_trade, list_trades
+from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade
 from .journal import summary, export_rows
 from .backtest import run_backtest
 
 init_db()
-app = FastAPI(title="CREDO-TRADAI API", version="0.5.0")
+app = FastAPI(title="CREDO-TRADAI API", version="0.6.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -21,7 +21,7 @@ class AnalysisRequest(BaseModel):
 
 class RiskRequest(BaseModel):
     balance: float = Field(gt=0)
-    risk_percent: float = Field(gt=0, le=10)
+    risk_percent: float = Field(gt=0, le=2)
     entry: float
     stop_loss: float
 
@@ -36,6 +36,10 @@ class PaperTradeRequest(BaseModel):
 class CloseTradeRequest(BaseModel):
     trade_id: str
     exit_price: float
+
+class MonitorRequest(BaseModel):
+    symbol: str
+    current_price: float = Field(gt=0)
 
 class BacktestRequest(BaseModel):
     closes: list[float] = Field(min_length=60)
@@ -90,6 +94,15 @@ def paper_close(req: CloseTradeRequest):
     trade=close_trade(req.trade_id,req.exit_price)
     if not trade: raise HTTPException(404,"Open trade not found")
     return trade
+
+@app.post("/paper/monitor")
+def paper_monitor(req: MonitorRequest):
+    checked = []
+    for trade in list_trades():
+        if trade["status"] == "OPEN" and trade["symbol"] == req.symbol.upper():
+            closed = monitor_trade(trade, req.current_price)
+            checked.append(closed or trade)
+    return {"symbol": req.symbol.upper(), "current_price": req.current_price, "checked": checked}
 
 @app.get("/journal/summary")
 def journal_summary():
