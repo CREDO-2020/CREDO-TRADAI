@@ -9,7 +9,7 @@ from .strategy import explain
 from .strategies import compare_strategies
 from .regime import detect_regime
 from .market import get_market
-from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade
+from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade, unrealized_pnl
 from .journal import summary, export_rows
 from .backtest import run_backtest
 from .execution import get_mode, execute_order
@@ -18,7 +18,7 @@ from .trading_engine import evaluate
 
 init_db()
 demo_account = DemoAccount()
-app = FastAPI(title="CREDO-TRADAI API", version="1.3.0")
+app = FastAPI(title="CREDO-TRADAI API", version="1.4.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -81,15 +81,31 @@ def dashboard():
 
 @app.get("/health")
 def health():
-    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.3.0"}
+    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.4.0"}
 
 @app.get("/execution/mode")
 def execution_mode():
     return {"mode":get_mode(),"live_enabled":get_mode()=="live","real_orders_configured":False}
 
+def _floating_pnl():
+    prices = {}
+    for symbol in {"BTCUSDT","ETHUSDT","EURUSD","GBPUSD","USDJPY"}:
+        try:
+            candles = get_market(symbol, "1h", "1d")["candles"]
+            if candles:
+                prices[symbol] = candles[-1]["close"]
+        except Exception:
+            pass
+    return sum(
+        unrealized_pnl(t, prices[t["symbol"]])
+        for t in list_trades()
+        if t["status"] == "OPEN" and t["symbol"] in prices
+    )
+
 @app.get("/demo/account")
 def demo_account_status():
-    return demo_account.snapshot()
+    floating = _floating_pnl()
+    return demo_account.snapshot(floating)
 
 @app.post("/demo/account/reset")
 def demo_account_reset():
@@ -100,7 +116,7 @@ def demo_account_reset():
 @app.post("/demo/account/pnl")
 def demo_account_pnl(req: PnlRequest):
     try:
-        return apply_pnl(demo_account, req.pnl)
+        return apply_pnl(demo_account, req.pnl, _floating_pnl())
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -180,6 +196,10 @@ def paper_position(trade_id: str):
 def paper_close(req: CloseTradeRequest):
     trade=close_trade(req.trade_id,req.exit_price)
     if not trade: raise HTTPException(404,"Open trade not found")
+    try:
+        apply_pnl(demo_account, trade["pnl"], _floating_pnl())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     return trade
 
 @app.post("/paper/monitor")
@@ -187,12 +207,23 @@ def paper_monitor(req: MonitorRequest):
     checked=[]
     for trade in list_trades():
         if trade["status"]=="OPEN" and trade["symbol"]==req.symbol.upper():
-            checked.append(monitor_trade(trade,req.current_price) or trade)
+            result = monitor_trade(trade,req.current_price)
+            if result:
+                try:
+                    apply_pnl(demo_account, result["pnl"], _floating_pnl())
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc))
+                checked.append(result)
+            else:
+                trade["unrealized_pnl"] = unrealized_pnl(trade, req.current_price)
+                checked.append(trade)
     return {"symbol":req.symbol.upper(),"current_price":req.current_price,"checked":checked}
 
 @app.get("/journal/summary")
 def journal_summary():
-    return summary()
+    data = summary()
+    data["unrealized_pnl"] = _floating_pnl()
+    return data
 
 @app.get("/journal/export")
 def journal_export():
