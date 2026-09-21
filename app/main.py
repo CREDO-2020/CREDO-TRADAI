@@ -1,5 +1,5 @@
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from .indicators import ema, rsi, macd, atr
@@ -16,10 +16,11 @@ from .execution import get_mode, execute_order
 from .account import DemoAccount, apply_pnl
 from .demo_store import load_account, save_account
 from .trading_engine import evaluate
+from .supabase_store import enabled as supabase_enabled, get_demo_account, create_demo_account, upsert_demo_account, list_paper_trades, create_paper_trade, close_paper_trade
 
 init_db()
 demo_account = load_account()
-app = FastAPI(title="CREDO-TRADAI API", version="1.5.0")
+app = FastAPI(title="CREDO-TRADAI API", version="1.6.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -76,13 +77,20 @@ class EngineRequest(BaseModel):
     balance: float = Field(gt=0)
     risk_percent: float = Field(gt=0, le=2, default=1)
 
+def _user_id(x_user_id: str | None):
+    if not x_user_id:
+        raise HTTPException(401, "Authenticated user ID is required.")
+    if not supabase_enabled():
+        raise HTTPException(503, "Supabase persistence is not configured.")
+    return x_user_id
+
 @app.get("/")
 def dashboard():
     return FileResponse(Path(__file__).parent.parent / "static" / "index.html")
 
 @app.get("/health")
 def health():
-    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.5.0","demo_persistence":"local_json"}
+    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.6.0","supabase_persistence":supabase_enabled(),"live_orders_configured":False}
 
 @app.get("/execution/mode")
 def execution_mode():
@@ -106,6 +114,57 @@ def _save():
 @app.get("/demo/account")
 def demo_account_status():
     return demo_account.snapshot(_floating_pnl())
+
+@app.get("/cloud/demo/account")
+def cloud_demo_account(x_user_id: str | None = Header(default=None)):
+    user_id = _user_id(x_user_id)
+    account = get_demo_account(user_id)
+    if not account:
+        account = create_demo_account(user_id)
+    return account
+
+@app.post("/cloud/demo/account/reset")
+def cloud_demo_account_reset(x_user_id: str | None = Header(default=None)):
+    user_id = _user_id(x_user_id)
+    return upsert_demo_account(user_id, 10000, 10000, 0)
+
+@app.get("/cloud/paper/trades")
+def cloud_paper_trades(x_user_id: str | None = Header(default=None)):
+    return {"trades": list_paper_trades(_user_id(x_user_id))}
+
+@app.post("/cloud/paper/open")
+def cloud_paper_open(req: PaperTradeRequest, x_user_id: str | None = Header(default=None)):
+    user_id = _user_id(x_user_id)
+    side = req.side.upper()
+    if side not in {"LONG", "SHORT"}:
+        raise HTTPException(400, "Side must be LONG or SHORT")
+    if side == "LONG" and not (req.stop_loss < req.entry < req.take_profit):
+        raise HTTPException(400, "LONG requires stop-loss < entry < take-profit")
+    if side == "SHORT" and not (req.take_profit < req.entry < req.stop_loss):
+        raise HTTPException(400, "SHORT requires take-profit < entry < stop-loss")
+    trade = {
+        "symbol": req.symbol.upper(), "side": side, "entry": req.entry,
+        "stop_loss": req.stop_loss, "take_profit": req.take_profit,
+        "quantity": req.quantity, "status": "OPEN"
+    }
+    result = create_paper_trade(user_id, trade)
+    if result is None:
+        raise HTTPException(503, "Supabase persistence is unavailable.")
+    return result
+
+@app.post("/cloud/paper/close")
+def cloud_paper_close(req: CloseTradeRequest, x_user_id: str | None = Header(default=None)):
+    user_id = _user_id(x_user_id)
+    trades = list_paper_trades(user_id)
+    trade = next((t for t in trades if str(t["id"]) == req.trade_id and t["status"] == "OPEN"), None)
+    if not trade:
+        raise HTTPException(404, "Open cloud trade not found")
+    direction = 1 if trade["side"] == "LONG" else -1
+    pnl = round((req.exit_price - float(trade["entry"])) * float(trade["quantity"]) * direction, 8)
+    result = close_paper_trade(user_id, req.trade_id, req.exit_price, pnl)
+    if not result:
+        raise HTTPException(409, "Trade could not be closed")
+    return {**result, "close_reason": "MANUAL"}
 
 @app.post("/demo/account/reset")
 def demo_account_reset():
