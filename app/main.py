@@ -13,9 +13,11 @@ from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade
 from .journal import summary, export_rows
 from .backtest import run_backtest
 from .execution import get_mode, execute_order
+from .account import DemoAccount, apply_pnl
 
 init_db()
-app = FastAPI(title="CREDO-TRADAI API", version="0.9.0")
+demo_account = DemoAccount()
+app = FastAPI(title="CREDO-TRADAI API", version="1.0.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -56,17 +58,37 @@ class OrderRequest(BaseModel):
     order_type: str = "MARKET"
     price: float | None = None
 
+class PnlRequest(BaseModel):
+    pnl: float
+
 @app.get("/")
 def dashboard():
     return FileResponse(Path(__file__).parent.parent / "static" / "index.html")
 
 @app.get("/health")
 def health():
-    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"0.9.0"}
+    return {"status":"ok","project":"CREDO-TRADAI","mode":get_mode(),"database":"sqlite","version":"1.0.0"}
 
 @app.get("/execution/mode")
 def execution_mode():
     return {"mode":get_mode(),"live_enabled":get_mode()=="live","real_orders_configured":False}
+
+@app.get("/demo/account")
+def demo_account_status():
+    return demo_account.snapshot()
+
+@app.post("/demo/account/reset")
+def demo_account_reset():
+    global demo_account
+    demo_account = DemoAccount()
+    return demo_account.snapshot()
+
+@app.post("/demo/account/pnl")
+def demo_account_pnl(req: PnlRequest):
+    try:
+        return apply_pnl(demo_account, req.pnl)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 @app.post("/execution/order")
 def execution_order(req: OrderRequest):
