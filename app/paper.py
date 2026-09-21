@@ -19,9 +19,13 @@ def init_db():
             opened_at TEXT NOT NULL, closed_at TEXT)""")
 
 def open_trade(symbol, side, entry, stop_loss, take_profit, quantity):
-    trade = (str(uuid4())[:8], symbol.upper(), side.upper(), entry, stop_loss,
-             take_profit, quantity, "OPEN", None, None,
-             datetime.now(timezone.utc).isoformat(), None)
+    side = side.upper()
+    if side == "LONG" and not (stop_loss < entry < take_profit):
+        raise ValueError("LONG requires stop-loss < entry < take-profit")
+    if side == "SHORT" and not (take_profit < entry < stop_loss):
+        raise ValueError("SHORT requires take-profit < entry < stop-loss")
+    trade = (str(uuid4())[:8], symbol.upper(), side, entry, stop_loss, take_profit,
+             quantity, "OPEN", None, None, datetime.now(timezone.utc).isoformat(), None)
     with conn() as db:
         db.execute("INSERT INTO trades VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", trade)
     return get_trade(trade[0])
@@ -38,8 +42,7 @@ def close_trade(trade_id, exit_price):
             return None
         direction = 1 if row["side"] == "LONG" else -1
         pnl = round((exit_price - row["entry"]) * row["quantity"] * direction, 8)
-        db.execute("""UPDATE trades SET exit=?, pnl=?, status='CLOSED', closed_at=?
-                      WHERE id=?""",
+        db.execute("UPDATE trades SET exit=?, pnl=?, status='CLOSED', closed_at=? WHERE id=?",
                    (exit_price, pnl, datetime.now(timezone.utc).isoformat(), trade_id))
     return get_trade(trade_id)
 
