@@ -13,6 +13,7 @@ from .paper import init_db, open_trade, close_trade, list_trades, monitor_trade,
 from .journal import summary, export_rows
 from .backtest import run_backtest
 from .execution import get_mode, execute_order
+from .mt5_broker import status as mt5_status, quote as mt5_quote
 from .account import DemoAccount, apply_pnl
 from .demo_store import load_account, save_account
 from .trading_engine import evaluate
@@ -29,7 +30,7 @@ from .supabase_store import (
 
 init_db()
 demo_account = load_account()
-app = FastAPI(title="CREDO-TRADAI API", version="1.7.0")
+app = FastAPI(title="CREDO-TRADAI API", version="1.8.0")
 
 class AnalysisRequest(BaseModel):
     closes: list[float] = Field(min_length=30)
@@ -120,7 +121,7 @@ def health():
 
 @app.get("/execution/mode")
 def execution_mode():
-    return {"mode":get_mode(),"live_enabled":get_mode()=="live","real_orders_configured":False}
+    return {"mode":get_mode(),"live_enabled":get_mode()=="live","mt5_demo_enabled":get_mode()=="mt5_demo","real_orders_configured":False}
 
 def _floating_pnl():
     prices = {}
@@ -225,6 +226,22 @@ def execution_order(req: OrderRequest):
         raise HTTPException(501, str(exc))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+@app.get("/broker/mt5/status")
+def broker_mt5_status():
+    try:
+        return mt5_status()
+    except Exception as exc:
+        raise HTTPException(502, f"MetaTrader 5 unavailable: {exc}")
+
+
+@app.get("/broker/mt5/quote/{symbol}")
+def broker_mt5_quote(symbol: str):
+    try:
+        return mt5_quote(symbol)
+    except Exception as exc:
+        raise HTTPException(502, f"MetaTrader 5 quote unavailable: {exc}")
+
 
 @app.get("/market/{symbol}")
 def market(symbol: str, interval: str = "1h", range_: str = "5d"):
