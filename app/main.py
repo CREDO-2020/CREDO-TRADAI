@@ -105,6 +105,10 @@ def dashboard():
 def login_page():
     return FileResponse(Path(__file__).parent.parent / "static" / "auth.html")
 
+@app.get("/auth.js")
+def auth_script():
+    return FileResponse(Path(__file__).parent.parent / "static" / "auth.js", media_type="application/javascript")
+
 @app.get("/auth/me")
 def auth_me(authorization: str | None = Header(default=None)):
     user = _current_user(authorization)
