@@ -2,6 +2,7 @@ import requests
 
 YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
+BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
 
 SYMBOLS = {
     "BTCUSDT": "BTC-USD",
@@ -54,7 +55,15 @@ def _binance_market(key, interval, range_):
     candles = _clean_candles(response.json())
     if not candles:
         raise RuntimeError("Binance returned no candle data")
-    return {"symbol": key, "source_symbol": key, "source": "binance", "candles": candles}
+    ticker = requests.get(
+        BINANCE_TICKER_URL,
+        params={"symbol": key},
+        timeout=10,
+        headers={"User-Agent": "CREDO-TRADAI/1.0"},
+    )
+    ticker.raise_for_status()
+    ticker_price = float(ticker.json()["price"])
+    return {"symbol": key, "source_symbol": key, "source": "binance", "price": ticker_price, "price_source": "binance_spot_ticker", "candles": candles}
 
 def _yahoo_market(key, interval, range_):
     yahoo_symbol = SYMBOLS.get(key, key)
@@ -99,7 +108,9 @@ def _yahoo_market(key, interval, range_):
             continue
     if not candles:
         raise RuntimeError("Yahoo returned no usable candle data")
-    return {"symbol": key, "source_symbol": yahoo_symbol, "source": "yahoo", "candles": candles}
+    meta = result.get("meta") or {}
+    current_price = meta.get("regularMarketPrice") or candles[-1]["close"]
+    return {"symbol": key, "source_symbol": yahoo_symbol, "source": "yahoo", "price": float(current_price), "price_source": "yahoo_market_price", "candles": candles}
 
 def get_market(symbol: str, interval: str = "1h", range_: str = "5d"):
     key = symbol.upper().replace("/", "")
