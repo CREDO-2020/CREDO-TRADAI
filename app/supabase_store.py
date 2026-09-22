@@ -3,10 +3,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+try:
     from supabase import create_client, Client
 except ImportError:
     create_client = None
     Client = Any
+
 
 def get_client():
     url = os.getenv("SUPABASE_URL")
@@ -15,8 +22,10 @@ def get_client():
         return None
     return create_client(url, key)
 
+
 def enabled():
     return get_client() is not None
+
 
 def get_user_from_access_token(access_token: str):
     client = get_client()
@@ -28,12 +37,14 @@ def get_user_from_access_token(access_token: str):
     except Exception:
         return None
 
+
 def get_demo_account(user_id: str):
     client = get_client()
     if client is None:
         return None
     result = client.table("demo_accounts").select("*").eq("user_id", user_id).limit(1).execute()
     return result.data[0] if result.data else None
+
 
 def create_demo_account(user_id: str):
     client = get_client()
@@ -43,6 +54,7 @@ def create_demo_account(user_id: str):
     result = client.table("demo_accounts").insert(payload).execute()
     return result.data[0] if result.data else None
 
+
 def upsert_demo_account(user_id: str, starting_balance: float, balance: float, realized_pnl: float):
     client = get_client()
     if client is None:
@@ -51,6 +63,7 @@ def upsert_demo_account(user_id: str, starting_balance: float, balance: float, r
     result = client.table("demo_accounts").upsert(payload, on_conflict="user_id").execute()
     return result.data[0] if result.data else None
 
+
 def list_paper_trades(user_id: str):
     client = get_client()
     if client is None:
@@ -58,12 +71,14 @@ def list_paper_trades(user_id: str):
     result = client.table("paper_trades").select("*").eq("user_id", user_id).order("opened_at", desc=True).execute()
     return result.data or []
 
+
 def create_paper_trade(user_id: str, trade: dict):
     client = get_client()
     if client is None:
         return None
     result = client.table("paper_trades").insert({**trade, "user_id": user_id}).execute()
     return result.data[0] if result.data else None
+
 
 def close_paper_trade(user_id: str, trade_id: str, exit_price: float, pnl: float):
     client = get_client()
